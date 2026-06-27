@@ -1,0 +1,32 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Capacitor Android (auto-generated, do NOT commit)
+android/
+
+# Capacitor iOS (auto-generated, do NOT commit)
+ios/
+
+# Build outputs
+dist/
+build/
+*.apk
+*.aab
+*.ipa
+
+# Local env
+.env
+.env.local
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
