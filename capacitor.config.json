@@ -21,5 +21,8 @@
   },
   "server": {
     "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
   }
 }
