@@ -4,18 +4,14 @@
   "description": "Aura Music - A full-featured local music player",
   "main": "index.html",
   "scripts": {
-    "build": "echo 'Static app - no build step needed'",
-    "cap:add": "npx cap add android",
-    "cap:sync": "npx cap sync android",
-    "cap:open": "npx cap open android"
+    "build": "echo 'Static app - no build step needed'"
   },
   "dependencies": {
     "@capacitor/android": "^5.7.0",
     "@capacitor/core": "^5.7.0",
     "@capacitor/filesystem": "^5.2.1",
     "@capacitor/splash-screen": "^5.0.7",
-    "@capacitor/status-bar": "^5.0.7",
-    "@capacitor-community/media": "^5.0.1"
+    "@capacitor/status-bar": "^5.0.7"
   },
   "devDependencies": {
     "@capacitor/cli": "^5.7.0"
