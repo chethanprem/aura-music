@@ -1,14 +1,7 @@
 {
   "appId": "com.auramusic.app",
   "appName": "Aura Music",
-  "webDir": ".",
-  "bundledWebRuntime": false,
-  "android": {
-    "buildOptions": {
-      "keystorePath": null,
-      "keystoreAlias": null
-    }
-  },
+  "webDir": "www",
   "plugins": {
     "SplashScreen": {
       "launchShowDuration": 1500,
