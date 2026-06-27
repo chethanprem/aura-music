@@ -1,0 +1,32 @@
+{
+  "appId": "com.auramusic.app",
+  "appName": "Aura Music",
+  "webDir": ".",
+  "bundledWebRuntime": false,
+  "android": {
+    "buildOptions": {
+      "keystorePath": null,
+      "keystoreAlias": null
+    }
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "launchAutoHide": true,
+      "backgroundColor": "#0a0a0f",
+      "androidSplashResourceName": "splash",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "dark",
+      "backgroundColor": "#0a0a0f"
+    },
+    "Keyboard": {
+      "resize": "body",
+      "style": "dark"
+    }
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
