@@ -743,21 +743,20 @@ ul,ol{list-style:none;}
       <div class="title-row" style="margin-top:24px;">
         <h2>All Songs</h2>
         <div style="display:flex;gap:8px;align-items:center;">
-          <button onclick="openFilePicker()" style="color:var(--accent3);font-size:.8rem;font-weight:600;">+ Add</button>
+          <button onclick="scanLocalMusic()" style="color:var(--accent3);font-size:.8rem;font-weight:600;">⟳ Scan</button>
           <a href="#" onclick="sortLibrary()">Sort</a>
         </div>
       </div>
     </div>
 
-    <!-- File picker area (shown when empty) -->
-    <div id="library-empty" class="file-pick-area" onclick="openFilePicker()">
+    <!-- Empty state shown while scanning / if no music found -->
+    <div id="library-empty" class="file-pick-area" onclick="scanLocalMusic()">
       <span class="fp-icon">🎵</span>
-      <p>Tap to add music from your device<br/>or link Google Drive above</p>
-      <span class="file-pick-btn">Browse Files</span>
+      <p id="library-empty-msg">Tap to scan music on this device</p>
+      <span class="file-pick-btn" id="library-scan-btn">Scan Device</span>
     </div>
 
     <div id="library-tracks-list"></div>
-    <input type="file" id="file-input" multiple accept="audio/*" style="display:none" onchange="handleFileInput(this)"/>
   </div>
 
   <!-- ═══════════════════════════════════════════════
@@ -1357,63 +1356,133 @@ function applyEQBands(){
 }
 
 // ═══════════════════════════════════════════════════════
-// FILE LOADING
+// LOCAL MUSIC SCANNING
+// Uses Capacitor Media plugin on Android; falls back to
+// file:// URI approach for WebView audio playback
 // ═══════════════════════════════════════════════════════
-function openFilePicker(){
-  document.getElementById('file-input').click();
+
+// Detect if running inside Capacitor (real device / APK)
+const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
+async function scanLocalMusic(){
+  const btn  = document.getElementById('library-scan-btn');
+  const msg  = document.getElementById('library-empty-msg');
+  const orig = btn.textContent;
+  btn.textContent = 'Scanning…';
+  msg.textContent = 'Reading your music library…';
+
+  try {
+    if(IS_NATIVE){
+      await scanNativeMusic();
+    } else {
+      showSnack('Install the APK to scan device music');
+      btn.textContent = orig;
+      msg.textContent = 'Tap to scan music on this device';
+    }
+  } catch(e){
+    console.error('Scan error:', e);
+    showSnack('Could not scan music: ' + (e.message||e));
+    btn.textContent = orig;
+    msg.textContent = 'Tap to retry scan';
+  }
 }
 
-function handleFileInput(input){
-  const files = Array.from(input.files||[]);
-  if(!files.length) return;
+async function scanNativeMusic(){
+  const { Media } = window.Capacitor.Plugins;
+  if(!Media){ showSnack('Media plugin not available'); return; }
+
+  // Request permission first
+  const perm = await Media.getMedias({ types: 'audio', quantity: 1 }).catch(()=>null);
+
+  // Fetch all audio files
+  const result = await Media.getMedias({ types: 'audio', quantity: 9999 });
+  const items  = result.medias || result.items || [];
+
+  if(!items.length){
+    showSnack('No music found on device');
+    document.getElementById('library-scan-btn').textContent = 'Scan Device';
+    document.getElementById('library-empty-msg').textContent = 'No music found. Add MP3s to your device.';
+    return;
+  }
+
+  // Merge: add only tracks not already in library (by identifier)
+  const existingIds = new Set(state.tracks.map(t => t.id));
   let added = 0;
-  files.forEach(file=>{
-    if(!file.type.startsWith('audio/')) return;
-    const url = URL.createObjectURL(file);
-    const name = file.name.replace(/\.[^.]+$/,'');
-    // Try to parse "Artist - Title" or just use filename
-    let title = name, artist = 'Unknown Artist';
-    const m = name.match(/^(.+?)\s*-\s*(.+)$/);
-    if(m){ artist = m[1].trim(); title = m[2].trim(); }
-    const track = {
-      id: Date.now()+Math.random(),
-      title, artist,
-      album: 'Unknown Album',
+
+  items.forEach(item => {
+    const id = item.identifier || item.id || item.path;
+    if(existingIds.has(id)) return;
+
+    // Build playable file:// URI from path
+    let url = item.path || '';
+    if(url && !url.startsWith('file://')) url = 'file://' + url;
+
+    // Parse title / artist from metadata or filename
+    let title  = item.title  || item.name || (url.split('/').pop().replace(/\.[^.]+$/,''));
+    let artist = item.artist || item.author || 'Unknown Artist';
+    let album  = item.album  || 'Unknown Album';
+    const duration = item.duration ? Number(item.duration) : 0;
+
+    // Clean up title if it still has extension
+    title = title.replace(/\.[^.]+$/, '');
+
+    state.tracks.push({
+      id,
+      title,
+      artist,
+      album,
       url,
-      file,
-      thumb: null,
-      duration: 0,
-      genre: '',
+      thumb: item.thumbnail || item.artwork || null,
+      duration,
+      genre: item.genre || '',
       source: 'local',
-    };
-    state.tracks.push(track);
+    });
     added++;
   });
+
   if(added){
-    showSnack(`Added ${added} track${added>1?'s':''}`);
+    // Persist track metadata (not the blobs, just metadata)
+    saveTracksToStorage();
     renderAll();
-    if(!state.isPlaying && state.tracks.length === added){
-      playTrack(0);
-    }
+    showSnack(`Found ${added} song${added>1?'s':''}`);
+    if(!state.isPlaying) playTrack(0);
+  } else {
+    showSnack('Library already up to date');
   }
-  input.value = '';
+  document.getElementById('library-scan-btn').textContent = 'Scan Device';
 }
 
-// Demo tracks (placeholders when no local files)
-const DEMO_TRACKS = [
-  {id:'d1',title:'Chill Waves',artist:'Lo-Fi Dreams',album:'Chill Vol. 1',url:'',thumb:null,duration:210,genre:'Chill',source:'demo'},
-  {id:'d2',title:'Midnight Drive',artist:'Neon Skies',album:'Neon Vol. 2',url:'',thumb:null,duration:195,genre:'Electronic',source:'demo'},
-  {id:'d3',title:'Electric Feel',artist:'Groove Factory',album:'Best Hits',url:'',thumb:null,duration:240,genre:'Pop',source:'demo'},
-  {id:'d4',title:'Summer Rain',artist:'Coastal Echoes',album:'Seasons',url:'',thumb:null,duration:187,genre:'Chill',source:'demo'},
-  {id:'d5',title:'Bass Theory',artist:'Deep Roots',album:'Underground',url:'',thumb:null,duration:223,genre:'Hip Hop',source:'demo'},
-];
+// Persist track list metadata in localStorage so library survives app restart
+function saveTracksToStorage(){
+  try{
+    const meta = state.tracks.map(t=>({
+      id: t.id, title: t.title, artist: t.artist,
+      album: t.album, url: t.url, thumb: t.thumb,
+      duration: t.duration, genre: t.genre, source: t.source,
+    }));
+    localStorage.setItem('aura_tracks_v1', JSON.stringify(meta));
+  }catch(e){ console.warn('Could not save tracks:', e); }
+}
+
+function loadTracksFromStorage(){
+  try{
+    const raw = localStorage.getItem('aura_tracks_v1');
+    if(!raw) return;
+    const meta = JSON.parse(raw);
+    // file:// URIs from last scan may still be valid — restore them
+    state.tracks = meta;
+  }catch(e){ console.warn('Could not load tracks:', e); }
+}
+
+// No demo tracks — show real empty state instead
+const DEMO_TRACKS = [];
 
 // ═══════════════════════════════════════════════════════
 // PLAYBACK CONTROLS
 // ═══════════════════════════════════════════════════════
 function playTrack(index, queue){
-  const tracks = queue || (state.tracks.length ? state.tracks : DEMO_TRACKS);
-  if(!tracks.length) return;
+  const tracks = queue || state.tracks;
+  if(!tracks.length){ showSnack('No music yet — tap Scan Device in Library'); return; }
   if(index < 0) index = tracks.length - 1;
   if(index >= tracks.length) index = 0;
   state.currentIndex = index;
@@ -1425,27 +1494,27 @@ function playTrack(index, queue){
     setupAudioContext();
     audio.src = t.url;
     audio.load();
-    audio.play().catch(e=>console.warn(e));
+    audio.play().catch(e=>{ console.warn('Play error:', e); showSnack('Cannot play: ' + t.title); });
     state.isPlaying = true;
-  } else {
-    // Demo track — simulate playing
-    state.isPlaying = true;
-    audio.src = '';
   }
   updatePlayerUI(t);
   updateMiniPlayer(t);
   updatePlayButtons();
+  updateMediaSession(t);
   highlightActiveTrack();
+  // Track recently played (ring buffer, no dupes)
+  if(!state.recentlyPlayed) state.recentlyPlayed = [];
+  state.recentlyPlayed = [t, ...state.recentlyPlayed.filter(x=>x.id!==t.id)].slice(0,20);
 }
 
-function playDemoTrack(i){ playTrack(i, DEMO_TRACKS); }
+function playDemoTrack(i){ playTrack(i); }
 
 function togglePlay(){
   if(!audio){ initAudio(); }
-  const tracks = state.queue.length ? state.queue : (state.tracks.length ? state.tracks : DEMO_TRACKS);
-  if(!tracks.length){ showSnack('Add music to start playing'); return; }
-  if(!audio.src && tracks[state.currentIndex]?.url){
-    audio.src = tracks[state.currentIndex].url;
+  if(!state.tracks.length){ showSnack('No music yet — tap Scan Device in Library'); return; }
+  const t = state.queue[state.currentIndex] || state.tracks[0];
+  if(!audio.src && t?.url){
+    audio.src = t.url;
     audio.load();
   }
   if(state.isPlaying){
@@ -1624,7 +1693,7 @@ function updateLikeBtn(){
 }
 
 function currentTrack(){
-  const q = state.queue.length ? state.queue : (state.tracks.length ? state.tracks : DEMO_TRACKS);
+  const q = state.queue.length ? state.queue : state.tracks;
   return q[state.currentIndex] || null;
 }
 let currentTrackIndex = 0; // alias for ctx menu
@@ -1678,33 +1747,80 @@ function formatTime(s){
 }
 
 function renderHome(){
-  // Greeting
   const h = new Date().getHours();
   const g = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
   document.getElementById('home-greeting').textContent = g;
 
-  // Made for you row
   const row = document.getElementById('made-for-you-row');
-  const mixes = [
-    {name:'Discover Mix',sub:'New picks',icon:'🔭'},
-    {name:'Chill Vibes',sub:'45 songs',icon:'🌙'},
-    {name:'Focus Flow',sub:'30 songs',icon:'⚡'},
-    {name:'Party Hits',sub:'60 songs',icon:'🎉'},
-    {name:'Road Trip',sub:'35 songs',icon:'🚗'},
-  ];
-  row.innerHTML = mixes.map((m,i)=>`
-    <div class="playlist-card" onclick="playDemoTrack(${i})">
-      <div class="cover" style="background:${['#4c1d95','#1e3a5f','#064e3b','#7f1d1d','#1c1917'][i]};">
-        <span class="cover-icon">${m.icon}</span>
+  if(!state.tracks.length){
+    // No music yet — show scan prompt cards
+    row.innerHTML = `
+      <div class="playlist-card" onclick="switchTab('library');scanLocalMusic()">
+        <div class="cover" style="background:#4c1d95;display:flex;align-items:center;justify-content:center;">
+          <span style="font-size:2.5rem;">🎵</span>
+        </div>
+        <p class="pc-name">Scan Device</p>
+        <p class="pc-sub">Add your music</p>
       </div>
-      <p class="pc-name">${m.name}</p>
-      <p class="pc-sub">${m.sub}</p>
-    </div>`).join('');
+      <div class="playlist-card" onclick="openDriveModal()">
+        <div class="cover" style="background:#1e3a5f;display:flex;align-items:center;justify-content:center;">
+          <span style="font-size:2.5rem;">☁️</span>
+        </div>
+        <p class="pc-name">Google Drive</p>
+        <p class="pc-sub">Sync from cloud</p>
+      </div>`;
+  } else {
+    // Show auto-generated smart playlists from real tracks
+    const allArtists  = [...new Set(state.tracks.map(t=>t.artist))];
+    const allAlbums   = [...new Set(state.tracks.map(t=>t.album))];
+    const liked       = state.tracks.filter(t=>state.liked.has(t.id));
+    const recent      = state.recentlyPlayed.slice(0,4);
+    const bgColors    = ['#4c1d95','#1e3a5f','#064e3b','#7f1d1d','#1c1917','#3b0764'];
 
-  // Recently played
+    const cards = [];
+    if(liked.length)      cards.push({name:'Liked Songs', sub:liked.length+' songs',    icon:'❤️',  tracks:liked});
+    if(recent.length)     cards.push({name:'Recently Played', sub:recent.length+' songs', icon:'🕐', tracks:recent});
+    if(allArtists.length) cards.push({name:allArtists[0],sub:'Top artist',               icon:'🎤',  tracks:state.tracks.filter(t=>t.artist===allArtists[0])});
+    if(allAlbums.length)  cards.push({name:allAlbums[0], sub:'Album',                    icon:'💿',  tracks:state.tracks.filter(t=>t.album===allAlbums[0])});
+    // Pad with shuffle card
+    cards.push({name:'Shuffle All', sub:state.tracks.length+' songs', icon:'🔀', tracks:null});
+
+    row.innerHTML = cards.slice(0,5).map((c,i)=>`
+      <div class="playlist-card" onclick='homeCardPlay(${i})'>
+        <div class="cover" style="background:${bgColors[i%bgColors.length]};display:flex;align-items:center;justify-content:center;">
+          <span style="font-size:2.5rem;">${c.icon}</span>
+        </div>
+        <p class="pc-name">${c.name}</p>
+        <p class="pc-sub">${c.sub}</p>
+      </div>`).join('');
+
+    // Store cards for click handler
+    window._homeCards = cards;
+  }
+
+  // Recently played / all tracks
   const list = document.getElementById('recently-played-list');
-  const tracks = state.tracks.length ? state.tracks.slice(-5).reverse() : DEMO_TRACKS.slice(0,3);
-  list.innerHTML = tracks.map((t,i)=>trackRowHTML(t,i,'home')).join('');
+  const tracks = state.recentlyPlayed.length
+    ? state.recentlyPlayed.slice(0,8)
+    : state.tracks.slice(0,8);
+  list.innerHTML = tracks.length
+    ? tracks.map((t,i)=>trackRowHTML(t, state.tracks.indexOf(t) !== -1 ? state.tracks.indexOf(t) : i, 'home')).join('')
+    : `<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:.85rem;">
+         Scan your device to see music here.<br/>
+         <button onclick="switchTab('library')" style="margin-top:10px;padding:8px 20px;border-radius:50px;background:var(--accent);color:white;font-size:.82rem;font-weight:700;cursor:pointer;">Go to Library</button>
+       </div>`;
+}
+
+function homeCardPlay(i){
+  const c = (window._homeCards||[])[i];
+  if(!c) return;
+  if(c.tracks){
+    state.shuffle = c.name === 'Shuffle All';
+    playTrack(0, c.tracks.length ? c.tracks : state.tracks);
+  } else {
+    state.shuffle = true;
+    playTrack(Math.floor(Math.random()*state.tracks.length), state.tracks);
+  }
 }
 
 function trackRowHTML(t, idx, ctx){
@@ -1738,6 +1854,8 @@ function renderLibrary(){
   const list = document.getElementById('library-tracks-list');
   if(!tracks.length){
     empty.style.display = 'flex';
+    document.getElementById('library-empty-msg').textContent = 'Tap to scan music on this device';
+    document.getElementById('library-scan-btn').textContent = 'Scan Device';
     list.innerHTML = '';
   } else {
     empty.style.display = 'none';
@@ -1872,7 +1990,7 @@ function handleSearch(q){
     return;
   }
   browse.style.display='none';
-  const all = [...state.tracks, ...DEMO_TRACKS];
+  const all = [...state.tracks];
   const lq = q.toLowerCase();
   const found = all.filter(t=>
     t.title.toLowerCase().includes(lq)||
@@ -1982,7 +2100,7 @@ function updatePlaylistCount(){
 // QUEUE
 // ═══════════════════════════════════════════════════════
 function renderQueue(){
-  const q = state.queue.length ? state.queue : (state.tracks.length ? state.tracks : DEMO_TRACKS);
+  const q = state.queue.length ? state.queue : state.tracks;
   const list = document.getElementById('queue-list');
   list.innerHTML = q.map((t,i)=>`
     <div class="track-row ${i===state.currentIndex?'active-track':''}" onclick="playTrack(${i},null);closeQueue()">
@@ -1999,7 +2117,7 @@ function renderQueue(){
 // CONTEXT MENU
 // ═══════════════════════════════════════════════════════
 function openContextMenu(idx){
-  const tracks = state.tracks.length ? state.tracks : DEMO_TRACKS;
+  const tracks = state.tracks;
   const t = tracks[idx];
   if(!t) return;
   ctxTargetIndex = idx;
@@ -2016,13 +2134,13 @@ function closeContextMenu(e){
 }
 function ctxPlay(){ playTrack(ctxTargetIndex); closeContextMenu(); }
 function ctxAddToQueue(){
-  const tracks = state.tracks.length ? state.tracks : DEMO_TRACKS;
+  const tracks = state.tracks;
   const t = tracks[ctxTargetIndex];
   if(t){ state.queue = [...(state.queue.length?state.queue:tracks)]; showSnack('Added to queue'); }
   closeContextMenu();
 }
 function ctxToggleLike(){
-  const tracks = state.tracks.length ? state.tracks : DEMO_TRACKS;
+  const tracks = state.tracks;
   const t = tracks[ctxTargetIndex];
   if(!t) return;
   if(state.liked.has(t.id)) state.liked.delete(t.id); else state.liked.add(t.id);
@@ -2036,7 +2154,7 @@ function ctxAddToPlaylist(){
   const choice = prompt(`Add to playlist:\n${names}\n\nEnter number:`);
   const idx = parseInt(choice)-1;
   if(idx>=0 && idx<state.playlists.length){
-    const tracks = state.tracks.length ? state.tracks : DEMO_TRACKS;
+    const tracks = state.tracks;
     state.playlists[idx].tracks.push(tracks[ctxTargetIndex]);
     saveState();
     showSnack(`Added to ${state.playlists[idx].name}`);
@@ -2259,7 +2377,19 @@ function updateMediaSession(t){
 // ═══════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════
+// Recently played ring buffer (max 20)
+if(!state.recentlyPlayed) state.recentlyPlayed = [];
+
+// Load persisted track list from previous session
+loadTracksFromStorage();
+
 loadState();
+
+// Auto-scan on first launch if no tracks loaded
+if(IS_NATIVE && !state.tracks.length){
+  setTimeout(scanLocalMusic, 800);
+}
+
 renderAll();
 renderSearchBrowse();
 updateDriveUI();
