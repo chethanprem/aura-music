@@ -7,7 +7,6 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-# Grant GITHUB_TOKEN permission to create releases
 permissions:
   contents: write
 
@@ -42,11 +41,11 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      # ── 6. Install Capacitor CLI + deps ───────────────────────
+      # ── 6. Install deps ───────────────────────────────────────
       - name: Install dependencies
         run: npm install
 
-      # ── 7. Prepare www/ folder ────────────────────────────────
+      # ── 7. Prepare www/ ───────────────────────────────────────
       - name: Prepare web assets
         run: |
           mkdir -p www
@@ -56,22 +55,34 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
-      # ── 9. Sync web assets ────────────────────────────────────
+      # ── 9. Patch AndroidManifest.xml ──────────────────────────
+      # Inject storage + audio permissions BEFORE cap sync so they
+      # are bundled into the APK. Both legacy (≤12) and modern (13+)
+      # permission names are needed for full device + SD card access.
+      - name: Patch AndroidManifest permissions
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          # Insert permissions after the opening <manifest> tag
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n\n    <!-- Storage permissions: covers internal + SD card on all Android versions -->\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <!-- Internet needed for Google Drive streaming -->\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />|' "$MANIFEST"
+          echo "--- Patched manifest ---"
+          head -30 "$MANIFEST"
+
+      # ── 10. Sync Capacitor ────────────────────────────────────
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # ── 10. Fix Gradle wrapper permissions ────────────────────
+      # ── 11. Gradle permissions ────────────────────────────────
       - name: Grant Gradle execute permission
         run: chmod +x android/gradlew
 
-      # ── 11. Build debug APK ───────────────────────────────────
+      # ── 12. Build debug APK ───────────────────────────────────
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon --stacktrace
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
 
-      # ── 12. Upload APK as artifact (always) ───────────────────
+      # ── 13. Upload artifact ───────────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -79,7 +90,7 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      # ── 13. Create GitHub Release (push to main only) ─────────
+      # ── 14. Create Release ────────────────────────────────────
       - name: Create Release
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
@@ -93,16 +104,12 @@ jobs:
 
             ### Install
             1. Download `app-debug.apk` below
-            2. On your Android device: Settings → Security → Allow Unknown Sources
-            3. Open the APK and install
+            2. Settings → Security → Allow Unknown Sources
+            3. Open and install
 
-            ### What's included
-            - All 7 screens: Home, Search, Library, Playlists, EQ, Now Playing, Settings
-            - Local file playback (MP3, FLAC, WAV, AAC, OGG)
-            - Google Drive sync
-            - 7-band Equalizer with presets
-            - Playlists, liked songs, queue, sleep timer
-            - Dark glassmorphism UI
+            ### Permissions required
+            - **Storage / Read Media Audio** — to scan local music + SD card
+            - **Internet** — for Google Drive streaming
           files: android/app/build/outputs/apk/debug/app-debug.apk
           draft: false
           prerelease: false
