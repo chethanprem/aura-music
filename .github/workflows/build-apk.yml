@@ -18,8 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Java (required by Gradle) ──────────────────────────
-      # NOTE: no 'cache: gradle' here — android/ doesn't exist yet
-      # at this point in the workflow (it's created by cap add below)
+      # No 'cache: gradle' — android/ doesn't exist until cap add runs
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -27,13 +26,13 @@ jobs:
           distribution: 'temurin'
 
       # ── 3. Node ───────────────────────────────────────────────
+      # No 'cache: npm' — requires package-lock.json in repo; we don't commit it
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
-      # ── 4. Set up Android SDK (before cap add so SDK is ready) ──
+      # ── 4. Set up Android SDK (before cap add so SDK env is ready) ──
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
