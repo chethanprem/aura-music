@@ -18,48 +18,44 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Java (required by Gradle) ──────────────────────────
+      # NOTE: no 'cache: gradle' here — android/ doesn't exist yet
+      # at this point in the workflow (it's created by cap add below)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
       # ── 3. Node ───────────────────────────────────────────────
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
-      # ── 4. Install Capacitor CLI + deps ───────────────────────
-      - name: Install dependencies
-        run: npm install
-
-      # ── 5. Add Android platform (first run only, idempotent) ──
-      - name: Add Android platform
-        run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          else
-            echo "Android platform already exists, skipping add."
-          fi
-
-      # ── 6. Sync web assets into Android project ───────────────
-      - name: Sync Capacitor
-        run: npx cap sync android
-
-      # ── 7. Fix Gradle wrapper permissions ─────────────────────
-      - name: Grant Gradle execute permission
-        run: chmod +x android/gradlew
-
-      # ── 8. Set up Android SDK ─────────────────────────────────
+      # ── 4. Set up Android SDK (before cap add so SDK is ready) ──
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── 9. Accept SDK licenses ────────────────────────────────
+      # ── 5. Accept SDK licenses ────────────────────────────────
       - name: Accept Android SDK licenses
         run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      # ── 6. Install Capacitor CLI + deps ───────────────────────
+      - name: Install dependencies
+        run: npm install
+
+      # ── 7. Add Android platform ───────────────────────────────
+      - name: Add Android platform
+        run: npx cap add android
+
+      # ── 8. Sync web assets into Android project ───────────────
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      # ── 9. Fix Gradle wrapper permissions ─────────────────────
+      - name: Grant Gradle execute permission
+        run: chmod +x android/gradlew
 
       # ── 10. Build debug APK ───────────────────────────────────
       - name: Build debug APK
