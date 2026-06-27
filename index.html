@@ -1280,11 +1280,12 @@ const STORE_KEY = 'aura_music_v1';
 
 function saveState(){
   const save = {
-    liked: [...state.liked],
-    playlists: state.playlists,
-    recentSearches: state.recentSearches,
+    liked: [...(state.liked||new Set())],
+    playlists: state.playlists||[],
+    recentSearches: state.recentSearches||[],
+    recentlyPlayed: (state.recentlyPlayed||[]).map(t=>t.id),
     driveConnected: state.driveConnected,
-    driveEmail: state.driveEmail,
+    driveEmail: state.driveEmail||'',
     volume: state.volume,
     shuffle: state.shuffle,
     repeat: state.repeat,
@@ -1309,7 +1310,21 @@ function loadState(){
     if(s.crossfade !== undefined) state.crossfade = s.crossfade;
     if(s.eqEnabled !== undefined) state.eqEnabled = s.eqEnabled;
     if(s.eqBands) state.eqBands = s.eqBands;
-  }catch(e){}
+    // Restore recentlyPlayed order from saved IDs (resolved after tracks load)
+    if(s.recentlyPlayed && Array.isArray(s.recentlyPlayed)){
+      state._savedRecentIds = s.recentlyPlayed;
+    }
+  }catch(e){ console.warn('loadState error:', e); }
+}
+
+function resolveRecentlyPlayed(){
+  if(!state._savedRecentIds || !state.tracks.length) return;
+  const byId = {};
+  state.tracks.forEach(t=>{ byId[t.id]=t; });
+  state.recentlyPlayed = state._savedRecentIds
+    .map(id=>byId[id])
+    .filter(Boolean);
+  delete state._savedRecentIds;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1598,7 +1613,7 @@ function playTrack(index, queue){
   updateMediaSession(t);
   highlightActiveTrack();
   // Track recently played (ring buffer, no dupes)
-  if(!state.recentlyPlayed) state.recentlyPlayed = [];
+  if(!Array.isArray(state.recentlyPlayed)) state.recentlyPlayed = [];
   state.recentlyPlayed = [t, ...state.recentlyPlayed.filter(x=>x.id!==t.id)].slice(0,20);
 }
 
@@ -1796,21 +1811,30 @@ let currentTrackIndex = 0; // alias for ctx menu
 // ═══════════════════════════════════════════════════════
 // NAVIGATION
 // ═══════════════════════════════════════════════════════
-const TABS = ['home','search','library','playlists','settings','equalizer'];
+const TABS = ['home','search','library','playlists','settings'];
 
 function switchTab(tab){
-  TABS.forEach(t=>{
+  // Equalizer has a screen but no nav item — handle separately
+  const navTabs = ['home','search','library','playlists','settings'];
+  const allScreens = [...navTabs, 'equalizer'];
+
+  allScreens.forEach(t=>{
     const s = document.getElementById('screen-'+t);
-    const n = document.getElementById('nav-'+t);
     if(s) s.classList.toggle('active', t===tab);
+  });
+  navTabs.forEach(t=>{
+    const n = document.getElementById('nav-'+t);
     if(n) n.classList.toggle('active', t===tab);
   });
-  if(tab === 'home') renderHome();
-  if(tab === 'library') renderLibrary();
-  if(tab === 'playlists') renderPlaylists();
-  if(tab === 'settings') renderSettings();
-  if(tab === 'equalizer') renderEQ();
-  if(tab === 'search') renderSearchBrowse();
+
+  try{
+    if(tab === 'home')     renderHome();
+    if(tab === 'library')  renderLibrary();
+    if(tab === 'playlists') renderPlaylists();
+    if(tab === 'settings') renderSettings();
+    if(tab === 'equalizer') renderEQ();
+    if(tab === 'search')   renderSearchBrowse();
+  }catch(e){ console.error('switchTab render error:', e); }
 }
 
 function openPlayer(){
@@ -1869,7 +1893,7 @@ function renderHome(){
     const allArtists  = [...new Set(state.tracks.map(t=>t.artist))];
     const allAlbums   = [...new Set(state.tracks.map(t=>t.album))];
     const liked       = state.tracks.filter(t=>state.liked.has(t.id));
-    const recent      = state.recentlyPlayed.slice(0,4);
+    const recent      = (state.recentlyPlayed||[]).slice(0,4);
     const bgColors    = ['#4c1d95','#1e3a5f','#064e3b','#7f1d1d','#1c1917','#3b0764'];
 
     const cards = [];
@@ -1895,7 +1919,7 @@ function renderHome(){
 
   // Recently played / all tracks
   const list = document.getElementById('recently-played-list');
-  const tracks = state.recentlyPlayed.length
+  const tracks = (state.recentlyPlayed||[]).length
     ? state.recentlyPlayed.slice(0,8)
     : state.tracks.slice(0,8);
   list.innerHTML = tracks.length
@@ -2615,10 +2639,10 @@ function showSnack(msg){
 // RENDER ALL
 // ═══════════════════════════════════════════════════════
 function renderAll(){
-  renderHome();
-  renderLibrary();
-  renderPlaylists();
-  renderSettings();
+  try{ renderHome(); }catch(e){ console.error('renderHome:', e); }
+  try{ renderLibrary(); }catch(e){ console.error('renderLibrary:', e); }
+  try{ renderPlaylists(); }catch(e){ console.error('renderPlaylists:', e); }
+  try{ renderSettings(); }catch(e){ console.error('renderSettings:', e); }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2652,22 +2676,30 @@ function updateMediaSession(t){
 // ═══════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════
-// Recently played ring buffer (max 20)
-if(!state.recentlyPlayed) state.recentlyPlayed = [];
-
 // Load persisted track list from previous session
 loadTracksFromStorage();
 
+// Load saved preferences
 loadState();
 
-// Auto-scan on first launch if no tracks loaded
-if(IS_NATIVE && !state.tracks.length){
-  setTimeout(scanLocalMusic, 800);
-}
+// Resolve recently played from saved IDs now that tracks are loaded
+try{ resolveRecentlyPlayed(); }catch(e){}
 
+// Always ensure these arrays exist (loadState may not set them)
+if(!state.recentlyPlayed) state.recentlyPlayed = [];
+if(!state.tracks) state.tracks = [];
+if(!state.queue) state.queue = [];
+if(!state.playlists) state.playlists = [];
+
+// Render UI first — app is usable immediately
 renderAll();
 renderSearchBrowse();
 updateDriveUI();
+
+// Auto-scan in background AFTER UI is painted (don't block tabs)
+if(IS_NATIVE && !state.tracks.length){
+  setTimeout(scanLocalMusic, 1500);
+}
 
 // Set initial volume bar
 const vb = document.getElementById('vol-bar');
