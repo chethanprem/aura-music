@@ -45,24 +45,26 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # ── 7. Prepare www/ ───────────────────────────────────────
-      - name: Prepare web assets
+      # ── 7. Verify www/ folder ─────────────────────────────────
+      # www/ is now committed directly — no copy step needed.
+      # Just confirm the files are there before Capacitor runs.
+      - name: Verify web assets
         run: |
-          mkdir -p www
-          cp index.html www/index.html
+          echo "── www/ contents ──"
+          ls -lh www/
+          echo "── www/js/ contents ──"
+          ls -lh www/js/
+          echo "── www/css/ contents ──"
+          ls -lh www/css/
 
       # ── 8. Add Android platform ───────────────────────────────
       - name: Add Android platform
         run: npx cap add android
 
       # ── 9. Patch AndroidManifest.xml ──────────────────────────
-      # Inject storage + audio permissions BEFORE cap sync so they
-      # are bundled into the APK. Both legacy (≤12) and modern (13+)
-      # permission names are needed for full device + SD card access.
       - name: Patch AndroidManifest permissions
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          # Insert permissions after the opening <manifest> tag
           sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n\n    <!-- Storage permissions: covers internal + SD card on all Android versions -->\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <!-- Internet needed for Google Drive streaming -->\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />|' "$MANIFEST"
           echo "--- Patched manifest ---"
           head -30 "$MANIFEST"
