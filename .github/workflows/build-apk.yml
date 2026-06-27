@@ -7,6 +7,10 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# Grant GITHUB_TOKEN permission to create releases
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build APK
@@ -18,7 +22,6 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Java ───────────────────────────────────────────────
-      # No 'cache: gradle' — android/ doesn't exist until cap add runs
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -26,13 +29,12 @@ jobs:
           distribution: 'temurin'
 
       # ── 3. Node ───────────────────────────────────────────────
-      # No 'cache: npm' — requires package-lock.json; we don't commit it
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      # ── 4. Android SDK (before cap add so SDK env is ready) ───
+      # ── 4. Android SDK ────────────────────────────────────────
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -44,7 +46,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # ── 7. Prepare www/ folder (Capacitor requires webDir to exist) ──
+      # ── 7. Prepare www/ folder ────────────────────────────────
       - name: Prepare web assets
         run: |
           mkdir -p www
@@ -54,7 +56,7 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
-      # ── 9. Sync web assets into Android project ───────────────
+      # ── 9. Sync web assets ────────────────────────────────────
       - name: Sync Capacitor
         run: npx cap sync android
 
@@ -69,37 +71,38 @@ jobs:
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
 
-      # ── 12. Upload APK artifact ───────────────────────────────
-      - name: Upload APK
+      # ── 12. Upload APK as artifact (always) ───────────────────
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: aura-music-debug-${{ github.run_number }}
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      # ── 13. Create GitHub Release (only on push to main) ──────
+      # ── 13. Create GitHub Release (push to main only) ─────────
       - name: Create Release
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: Aura Music v1.0.${{ github.run_number }}
           body: |
             ## Aura Music APK
-            
+
             Auto-built from commit `${{ github.sha }}`
-            
+
             ### Install
-            1. Download `aura-music-debug.apk` below
+            1. Download `app-debug.apk` below
             2. On your Android device: Settings → Security → Allow Unknown Sources
-            3. Open the downloaded APK and install
-            
+            3. Open the APK and install
+
             ### What's included
-            - Full music player with EQ, shuffle, repeat, sleep timer
-            - Local file loading (MP3, FLAC, WAV, AAC, OGG)
+            - All 7 screens: Home, Search, Library, Playlists, EQ, Now Playing, Settings
+            - Local file playback (MP3, FLAC, WAV, AAC, OGG)
             - Google Drive sync
-            - Playlists, liked songs, queue management
-            - Glassmorphism dark UI with purple accent
+            - 7-band Equalizer with presets
+            - Playlists, liked songs, queue, sleep timer
+            - Dark glassmorphism UI
           files: android/app/build/outputs/apk/debug/app-debug.apk
           draft: false
           prerelease: false
