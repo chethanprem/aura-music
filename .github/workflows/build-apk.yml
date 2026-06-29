@@ -60,6 +60,11 @@ jobs:
       # ── 8. Add Android platform ───────────────────────────────
       - name: Add Android platform
         run: npx cap add android
+        
+      # ── Copy custom icons ─────────────────────────────────
+      - name: Copy custom app icons
+        run: |
+          cp -r android-config/res/. android/app/src/main/res/
 
       # ── 9. Patch AndroidManifest.xml ──────────────────────────
       - name: Patch AndroidManifest permissions
