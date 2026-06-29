@@ -16,7 +16,7 @@
 // ═══════════════════════════════════════════════════════
 
 // ↓↓ PASTE YOUR CLIENT ID HERE (ends in .apps.googleusercontent.com)
-const DRIVE_CLIENT_ID = 'YOUR_CLIENT_ID.apps.googleusercontent.com';
+const DRIVE_CLIENT_ID = '26269732178-ainj1cfg4657q7amh0uu96vhse3o4dit.apps.googleusercontent.com';
 
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly email profile';
 const DRIVE_API   = 'https://www.googleapis.com/drive/v3';
