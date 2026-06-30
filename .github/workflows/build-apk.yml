@@ -1,0 +1,158 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Java ───────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── 3. Node ───────────────────────────────────────────────
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ── 4. Android SDK ────────────────────────────────────────
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # ── 5. Accept SDK licenses ────────────────────────────────
+      - name: Accept Android SDK licenses
+        run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      # ── 6. Install deps ───────────────────────────────────────
+      - name: Install dependencies
+        run: npm install
+
+      # ── 7. Verify www/ folder ─────────────────────────────────
+      # www/ is now committed directly — no copy step needed.
+      # Just confirm the files are there before Capacitor runs.
+      - name: Verify web assets
+        run: |
+          echo "── www/ contents ──"
+          ls -lh www/
+          echo "── www/js/ contents ──"
+          ls -lh www/js/
+          echo "── www/css/ contents ──"
+          ls -lh www/css/
+
+      # ── 8. Add Android platform ───────────────────────────────
+      - name: Add Android platform
+        run: npx cap add android
+        
+      # ── Copy custom icons ─────────────────────────────────
+      - name: Copy custom app icons
+        run: |
+          cp -r android-config/res/. android/app/src/main/res/
+
+      # ── 9. Patch AndroidManifest.xml ──────────────────────────
+      - name: Patch AndroidManifest permissions
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          sed -i 's|<manifest xmlns:android="http://schemas.android.com/apk/res/android">|<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n\n    <!-- Storage permissions: covers internal + SD card on all Android versions -->\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <!-- Internet needed for Google Drive streaming -->\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />|' "$MANIFEST"
+          echo "--- Patched manifest (permissions) ---"
+          head -30 "$MANIFEST"
+
+      # ── 9b. Add OAuth redirect intent-filter to MainActivity ──
+      # Lets Android route com.auramusic.app://oauth links back
+      # into this app after Google Sign-In completes in the
+      # system browser.
+      - name: Patch AndroidManifest OAuth redirect scheme
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          python3 << 'PYEOF'
+          import re
+
+          path = "android/app/src/main/AndroidManifest.xml"
+          with open(path) as f:
+              content = f.read()
+
+          intent_filter = '''
+                  <intent-filter>
+                      <action android:name="android.intent.action.VIEW" />
+                      <category android:name="android.intent.category.DEFAULT" />
+                      <category android:name="android.intent.category.BROWSABLE" />
+                      <data android:scheme="com.auramusic.app" />
+                  </intent-filter>
+              </activity>'''
+
+          # Insert before the first closing </activity> tag (MainActivity)
+          if 'android:scheme="com.auramusic.app"' not in content:
+              content = content.replace('</activity>', intent_filter, 1)
+
+          with open(path, 'w') as f:
+              f.write(content)
+
+          print("--- OAuth intent-filter patched ---")
+          PYEOF
+          grep -A 6 "com.auramusic.app" "$MANIFEST" || echo "WARNING: intent-filter not found after patch"
+
+      # ── 10. Sync Capacitor ────────────────────────────────────
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      # ── 11. Gradle permissions ────────────────────────────────
+      - name: Grant Gradle execute permission
+        run: chmod +x android/gradlew
+
+      # ── 12. Build debug APK ───────────────────────────────────
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+
+      # ── 13. Upload artifact ───────────────────────────────────
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-music-debug-${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      # ── 14. Create Release ────────────────────────────────────
+      - name: Create Release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Aura Music v1.0.${{ github.run_number }}
+          body: |
+            ## Aura Music APK
+
+            Auto-built from commit `${{ github.sha }}`
+
+            ### Install
+            1. Download `app-debug.apk` below
+            2. Settings → Security → Allow Unknown Sources
+            3. Open and install
+
+            ### Permissions required
+            - **Storage / Read Media Audio** — to scan local music + SD card
+            - **Internet** — for Google Drive streaming
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
